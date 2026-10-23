@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robotic Hand - AI & Vision Controlled Gesture System</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Font (Inter & JetBrains Mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Three.js for 3D Robotic Hand rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cyber: {
+                            black: '#0a0d14',
+                            dark: '#0f172a',
+                            card: 'rgba(15, 23, 42, 0.75)',
+                            border: '#1e293b',
+                            cyan: '#06b6d4',
+                            blue: '#3b82f6',
+                            purple: '#8b5cf6',
+                            accent: '#22d3ee',
+                            alert: '#f43f5e'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #06090e;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* Cyberpunk Grid Background */
+        .cyber-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(6, 182, 212, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(6, 182, 212, 0.05) 1px, transparent 1px);
+        }
+
+        /* Glassmorphism card effects */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(6, 182, 212, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .glass-panel-active {
+            border-color: rgba(6, 182, 212, 0.8);
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #090d16;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #06b6d4;
+        }
+
+        /* Glowing text effects */
+        .text-glow {
+            text-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+        }
+
+        .text-glow-red {
+            text-shadow: 0 0 10px rgba(244, 63, 94, 0.6);
+        }
+
+        /* Animated pulse ring */
+        @keyframes radar-sweep {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .radar-line {
+            animation: radar-sweep 4s linear infinite;
+        }
+
+        /* Terminal blinking cursor */
+        .cursor-blink::after {
+            content: '▋';
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="cyber-grid min-h-screen flex flex-col justify-between selection:bg-cyber-cyan selection:text-black">
+
+    <!-- Top Navigation Header -->
+    <header class="sticky top-0 z-50 glass-panel border-b border-slate-800 px-4 py-3">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-bold text-lg">
+                    <i class="fa-solid fa-robot"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base md:text-lg tracking-wide text-slate-100 flex items-center gap-2">
+                        ROBOTIC HAND <span class="text-xs px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-400 font-mono font-normal">AI CV DEMO</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 hidden sm:block">Support Vector Machine & MediaPipe Gesture Recognition System</p>
+                </div>
+            </div>
+
+            <!-- Quick Control Toggles & TTS Config -->
+            <div class="flex items-center gap-2 sm:gap-4 text-xs font-mono">
+                <button id="audio-toggle" onclick="toggleAudio()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 transition flex items-center gap-2">
+                    <i id="audio-icon" class="fa-solid fa-volume-high text-cyan-400"></i>
+                    <span id="audio-status" class="hidden md:inline">AUDIO ON</span>
+                </button>
+                <button id="robot-voice-effect-btn" onclick="toggleRoboticEffect()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 transition flex items-center gap-2">
+                    <i class="fa-solid fa-microchip text-purple-400"></i>
+                    <span class="hidden md:inline">ROBO VOICE EFFECT</span>
+                </button>
+                <span class="h-4 w-px bg-slate-800"></span>
+                <div class="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800 text-slate-400">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    <span class="text-[11px]">SYS ONLINE</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="max-w-7xl w-full mx-auto p-3 sm:p-6 flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- LEFT PANEL: Slide Deck & Speaker View Script (7 Cols on desktop) -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- Speaker Stepper Bar (Horizontal Scrollable on Mobile) -->
+            <div class="glass-panel p-2 rounded-xl overflow-x-auto flex items-center gap-1.5 scrollbar-thin">
+                <template id="speaker-tab-template">
+                    <button class="speaker-tab px-3 py-1.5 rounded-lg text-xs font-mono whitespace-nowrap transition flex items-center gap-1.5">
+                        <span class="speaker-num font-bold"></span>
+                    </button>
+                </template>
+                <div id="speaker-tabs-container" class="flex gap-1.5"></div>
+            </div>
+
+            <!-- Slide Main Display Box -->
+            <div class="glass-panel rounded-2xl p-5 md:p-6 flex flex-col justify-between min-h-[460px] relative overflow-hidden border-cyan-500/20">
+                <!-- Background ambient glow -->
+                <div class="absolute -top-24 -left-24 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+                <div>
+                    <!-- Slide Header / Topic Tag -->
+                    <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
+                        <div class="flex items-center gap-2">
+                            <span id="slide-speaker-badge" class="px-2.5 py-1 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono text-xs font-semibold">
+                                Speaker 1
+                            </span>
+                            <span id="slide-topic" class="text-xs text-slate-400 font-mono tracking-wide uppercase">Introduction</span>
+                        </div>
+                        <div class="text-xs font-mono text-slate-500">
+                            Slide <span id="current-slide-num" class="text-cyan-400 font-bold">1</span> / <span id="total-slides-num">10</span>
+                        </div>
+                    </div>
+
+                    <!-- Slide Content Title & Transcript -->
+                    <div class="space-y-4">
+                        <h2 id="slide-title" class="text-xl sm:text-2xl font-bold text-slate-100 text-glow">
+                            System Activation & Core Concept
+                        </h2>
+
+                        <!-- Robotic Cue Alert Banner (If present in speaker text) -->
+                        <div id="robotic-cue-box" class="hidden p-3.5 rounded-xl bg-purple-950/40 border border-purple-500/40 text-purple-200 text-sm font-mono flex items-start gap-3 shadow-lg shadow-purple-950/30">
+                            <div class="p-1.5 bg-purple-900/50 rounded-lg text-purple-400 mt-0.5">
+                                <i class="fa-solid fa-robot animate-pulse"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="text-[10px] uppercase font-bold tracking-wider text-purple-400 mb-0.5">ROBOTIC VOICE CUE</div>
+                                <div id="robotic-cue-text" class="italic text-purple-100">"System activated. Human gesture recognition initiated."</div>
+                            </div>
+                            <button onclick="speakRoboticCue()" class="px-2.5 py-1 rounded bg-purple-800 hover:bg-purple-700 text-xs font-sans transition">
+                                <i class="fa-solid fa-play mr-1"></i> Speak
+                            </button>
+                        </div>
+
+                        <!-- Speaker Script Transcript Box -->
+                        <div id="speaker-script" class="text-slate-300 text-sm sm:text-base leading-relaxed space-y-3 pt-2 max-h-[260px] overflow-y-auto pr-2">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Controls Footer -->
+                <div class="pt-6 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 mt-6">
+                    <button id="prev-slide-btn" onclick="navigateSlide(-1)" class="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-sm font-medium transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <i class="fa-solid fa-arrow-left"></i> Previous
+                    </button>
+
+                    <div class="flex items-center gap-2">
+                        <button id="speak-all-btn" onclick="readFullSpeakerScript()" class="px-3.5 py-2 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/50 text-cyan-300 text-xs font-mono transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-volume-high"></i> Read Speaker Script
+                        </button>
+                    </div>
+
+                    <button id="next-slide-btn" onclick="navigateSlide(1)" class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-sm transition flex items-center gap-2 shadow-lg shadow-cyan-600/20">
+                        Next <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Slide Progress Bar -->
+            <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                <div id="slide-progress" class="bg-gradient-to-r from-cyan-500 to-blue-500 h-full w-10 transition-all duration-300"></div>
+            </div>
+
+        </section>
+
+
+        <!-- RIGHT PANEL: 3D Hand Visualizer, Landmark Mesh & Telemetry (5 Cols on desktop) -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+
+            <!-- Interactive Gesture State & Controls -->
+            <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-mono text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-cyan-400"></i> Gesture Control Simulation
+                    </span>
+                    <span id="current-gesture-badge" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-glow">
+                        STATE: OPEN
+                    </span>
+                </div>
+
+                <!-- Manual Trigger Buttons -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="setGestureState('OPEN')" id="btn-open" class="py-2.5 px-3 rounded-xl border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1 active:scale-95">
+                        <i class="fa-solid fa-hand text-base"></i> OPEN
+                    </button>
+                    <button onclick="setGestureState('CLOSED')" id="btn-closed" class="py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1 active:scale-95">
+                        <i class="fa-solid fa-hand-back-fist text-base"></i> CLOSED
+                    </button>
+                    <button onclick="toggleLiveAutoSim()" id="btn-auto" class="py-2.5 px-3 rounded-xl border border-purple-700/50 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1 active:scale-95">
+                        <i id="auto-sim-icon" class="fa-solid fa-repeat text-base"></i> <span id="auto-sim-text">AUTO WAVE</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3D Canvas / MediaPipe Landmarks Container -->
+            <div class="glass-panel rounded-2xl p-3 relative h-[300px] sm:h-[340px] flex items-center justify-center overflow-hidden">
+                <!-- 3D Three.js Container -->
+                <div id="canvas-container" class="w-full h-full rounded-xl overflow-hidden relative"></div>
+
+                <!-- Overlay Telemetry Stats -->
+                <div class="absolute top-5 left-5 pointer-events-none flex flex-col gap-1 font-mono text-[11px] text-slate-300 bg-slate-950/80 backdrop-blur p-2.5 rounded-lg border border-slate-800">
+                    <div class="text-cyan-400 font-bold mb-0.5">MediaPipe Landmarks</div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-slate-500">Nodes Tracked:</span>
+                        <span class="text-cyan-300">21 Points</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-slate-500">Norm Dist Ratio:</span>
+                        <span id="telemetry-ratio" class="text-emerald-400 font-bold">1.42 (OPEN)</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-slate-500">SVM Model:</span>
+                        <span class="text-purple-300">RBF Kernel</span>
+                    </div>
+                </div>
+
+                <!-- 7-Frame Voting Filter Visual Meter Overlay -->
+                <div class="absolute bottom-5 right-5 pointer-events-none bg-slate-950/80 backdrop-blur p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1 text-[10px] font-mono">
+                    <div class="text-slate-400 font-bold">7-FRAME VOTING FILTER</div>
+                    <div id="voting-pills" class="flex items-center gap-1">
+                        <!-- 7 voting indicators -->
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                        <span class="w-2.5 h-5 rounded bg-cyan-400 shadow-sm shadow-cyan-400"></span>
+                    </div>
+                    <div class="text-[9px] text-right text-slate-400 mt-0.5">Threshold: 4/7 Votes</div>
+                </div>
+            </div>
+
+            <!-- Serial Output & Servo Hardware Status -->
+            <div class="glass-panel rounded-2xl p-4 font-mono text-xs space-y-2">
+                <div class="flex items-center justify-between text-slate-400 text-[11px]">
+                    <span class="flex items-center gap-1.5">
+                        <i class="fa-solid fa-bolt text-amber-400"></i> ARDUINO USB SERIAL BUS (115200 Baud)
+                    </span>
+                    <span class="text-emerald-400">COM4 [CONNECTED]</span>
+                </div>
+
+                <!-- Terminal Display -->
+                <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 h-24 overflow-y-auto text-[11px] leading-relaxed text-slate-300 font-mono space-y-1" id="serial-terminal">
+                    <div class="text-slate-500">[SYSTEM INIT] Serial buffer allocated. Listening for gesture predictions...</div>
+                    <div class="text-slate-500">[MEDIAPIPE] 21 Landmarks normalized against middle finger palm base.</div>
+                    <div id="latest-serial-line" class="text-cyan-400 font-bold cursor-blink">> SEND_CMD: 'O' -> Servo Array [180°, 180°, 180°, 180°, 180°]</div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/80 py-3 text-center text-xs font-mono text-slate-500">
+        <p>AI Gesture Controlled Robotic Hand Presentation Deck • MediaPipe + SVM Machine Learning</p>
+    </footer>
+
+
+    <!-- JAVASCRIPT & INTERACTIVE SIMULATION LOGIC -->
+    <script>
+        // --- 1. PRESENTATION DATA STRUCTURE ---
+        const slidesData = [
+            {
+                speaker: 1,
+                badge: "Speaker 1",
+                topic: "Introduction",
+                title: "Gesture Recognition Concept",
+                script: [
+                    "Good morning, respected judges, teachers, and everyone present here.",
+                    "What if a machine could watch your hand, understand your gesture, and perform the same movement without a glove, physical sensors, or a remote control?",
+                    "Today, we are presenting a project that brings this idea to life using artificial intelligence, computer vision, and robotics."
+                ],
+                cue: "System activated. Human gesture recognition initiated.",
+                gesture: "OPEN"
+            },
+            {
+                speaker: 2,
+                badge: "Speaker 2",
+                topic: "Team Mission",
+                title: "AI-Controlled Physical Movement",
+                script: [
+                    "We are Team [Team Name], and our project is an AI-controlled robotic hand that recognizes two human gestures — OPEN and CLOSED — and responds in real time.",
+                    "Our goal was not simply to make a robotic hand move. It was to build a complete system in which a machine observes, learns from data, makes a prediction, and converts that prediction into physical movement.",
+                    "Let's see how we made that possible."
+                ],
+                cue: null,
+                gesture: "OPEN"
+            },
+            {
+                speaker: 3,
+                badge: "Speaker 3",
+                topic: "Hardware Design",
+                title: "Mechanical & Microcontroller Architecture",
+                script: [
+                    "Our project begins with a 3D-printed robotic hand powered by ten servo motors.",
+                    "These motors act like artificial muscles, pulling the finger mechanisms to open and close the hand. An Arduino microcontroller controls the motors and turns the commands received from our software into movement.",
+                    "A webcam captures the human hand, while a laptop processes the video and runs the AI.",
+                    "But here is the important point: the Arduino controls the movement, while the AI decides which gesture has been recognized. Both must work together for the system to function."
+                ],
+                cue: null,
+                gesture: "CLOSED"
+            },
+            {
+                speaker: 4,
+                badge: "Speaker 4",
+                topic: "Computer Vision",
+                title: "MediaPipe Hands & Normalization",
+                script: [
+                    "Before a machine can respond to a gesture, it must extract useful information from what the camera sees.",
+                    "For this, we use MediaPipe Hands, a pre-trained machine-learning solution developed by Google.",
+                    "It detects 21 landmarks on a hand, including the wrist, knuckles, finger joints, and fingertips. Each landmark has position coordinates, allowing the system to represent the hand's structure numerically.",
+                    "However, the hand may appear larger or smaller depending on its distance from the camera. To handle this, we calculate the distances from the wrist to the five fingertips and divide them by the distance from the wrist to the base of the middle finger.",
+                    "This process is called normalization. It reduces the effect of changes in camera distance, helping the model focus on the gesture rather than the apparent size of the hand. The result is five numerical features that describe the hand's shape."
+                ],
+                cue: "Twenty-one landmarks detected. Hand tracking in progress.",
+                gesture: "OPEN"
+            },
+            {
+                speaker: 5,
+                badge: "Speaker 5",
+                topic: "Core AI",
+                title: "Supervised Learning & SVM RBF Kernel",
+                script: [
+                    "Now comes the most important part: machine learning.",
+                    "We did not simply write instructions such as, 'If the fingers look bent, close the robotic hand.' Instead, we trained our own classification model using examples.",
+                    "We collected 200 samples of an OPEN hand and 200 samples of a CLOSED hand. Each sample was labeled so that the model knew which category it belonged to.",
+                    "We then trained a Support Vector Machine, or SVM. Imagine two groups of points on a graph: one representing OPEN gestures and the other representing CLOSED gestures. The SVM learns a decision boundary that separates the groups while trying to maximize the margin between them.",
+                    "We use an RBF kernel, which allows the model to learn a curved, more flexible boundary when the two groups cannot be separated easily by a straight line.",
+                    "Before classification, a StandardScaler rescales the five features so that differences in their numerical ranges do not unfairly influence the model."
+                ],
+                cue: null,
+                gesture: "CLOSED"
+            },
+            {
+                speaker: 6,
+                badge: "Speaker 6",
+                topic: "Model Evaluation",
+                title: "Testing Intelligence & Fallback Mechanism",
+                script: [
+                    "An AI model is only useful if it can make reliable predictions on data it has not already learned from.",
+                    "To evaluate our model, we divided our dataset into two parts: 80% for training and 20% for testing.",
+                    "The model learned from the training data, while the testing data was kept separate to evaluate its performance on unseen examples.",
+                    "Our model achieved 95% accuracy on the held-out test set.",
+                    "This is an encouraging result, but it does not mean the system will be correct 95% of the time in every environment. Lighting, hand positions, camera quality, and different users may affect performance.",
+                    "We also designed a fallback rule. If the trained model is unavailable or fails, the system can use finger-distance measurements and thresholds to distinguish between OPEN and CLOSED."
+                ],
+                cue: null,
+                gesture: "OPEN"
+            },
+            {
+                speaker: 7,
+                badge: "Speaker 7",
+                topic: "Filtering & Serial",
+                title: "7-Frame Voting Filter & USB Serial Output",
+                script: [
+                    "Even a good AI model can occasionally make an incorrect prediction. So how do we stop one mistaken frame from making the robotic hand twitch?",
+                    "We use a seven-frame voting filter. The system remembers recent predictions and waits for enough of them to agree before switching the hand's state. It requires four matching votes out of seven to change states, reducing the effect of momentary errors.",
+                    "Our fallback rule also uses hysteresis: the average of four finger-distance measurements, excluding the thumb, must rise above 1.35 to indicate OPEN or fall below 1.15 to indicate CLOSED.",
+                    "Once the decision is stable, a Python program sends a single character through USB serial communication to the Arduino: O for OPEN and C for CLOSED. The Arduino then moves the servo motors."
+                ],
+                cue: "Prediction stabilized. Command transmitted. Movement authorized.",
+                gesture: "CLOSED"
+            },
+            {
+                speaker: 8,
+                badge: "Speaker 8",
+                topic: "Applications",
+                title: "Assistive Robotics & Future Potential",
+                script: [
+                    "Our project demonstrates how artificial intelligence can interact with the physical world.",
+                    "With further development, similar systems could contribute to low-cost assistive robotics, gesture-controlled devices, and research into handling hazardous materials remotely.",
+                    "Our current prototype is limited to two gestures, but its modular design makes experimentation with additional gestures possible. We could collect more training examples, extend the classification model, and develop commands for individual finger movements.",
+                    "Future improvements could also include proportional finger control, where the robotic hand moves gradually instead of switching only between fully open and fully closed positions."
+                ],
+                cue: null,
+                gesture: "OPEN"
+            },
+            {
+                speaker: 9,
+                badge: "Speaker 9",
+                topic: "Innovation",
+                title: "Multidisciplinary Engineering & Reliability",
+                script: [
+                    "Our project's innovation lies in combining several technologies into one working system: computer vision, supervised machine learning, mechanical design, electronic control, and real-time software.",
+                    "We also focused on reliability by testing the model, filtering unstable predictions, adding a fallback mechanism, and preparing for connection failures.",
+                    "Most importantly, the project required teamwork. Designing the hand, connecting the motors, collecting data, training the model, writing the software, and testing the complete system were all essential parts of our work.",
+                    "The AI provides the recognition capability, but human engineering connects that intelligence to the real world."
+                ],
+                cue: null,
+                gesture: "CLOSED"
+            },
+            {
+                speaker: 10,
+                badge: "Speaker 10",
+                topic: "Conclusion & Demo",
+                title: "Live Gesture Demonstration",
+                script: [
+                    "We started with an idea: could a camera-based AI system recognize a human gesture and make a robotic hand imitate it?",
+                    "We combined a camera, a trained machine-learning model, Python software, an Arduino, and servo motors to turn that idea into a working prototype.",
+                    "What makes our project special is not just the movement you see. It is the process behind it: detecting landmarks, extracting features, learning from labeled examples, testing predictions, filtering errors, and controlling physical hardware.",
+                    "Now, it is time to see the system work.",
+                    "As you can see, a human gesture becomes data, the data becomes a prediction, and the prediction becomes movement.",
+                    "We believe this project shows how artificial intelligence and engineering can work together to solve practical problems and inspire new possibilities."
+                ],
+                cue: "Demonstration complete. Thank you, humans.",
+                gesture: "OPEN"
+            }
+        ];
+
+        // --- 2. GLOBAL STATE ---
+        let currentSlideIndex = 0;
+        let isAudioEnabled = true;
+        let isRoboticEffectEnabled = true;
+        let autoWaveInterval = null;
+        let currentHandState = "OPEN"; // 'OPEN' or 'CLOSED'
+        let synth = window.speechSynthesis;
+        let hasUserInteracted = false;
+        let audioCtx = null;
+
+        // --- 3. DOM ELEMENTS ---
+        const tabsContainer = document.getElementById('speaker-tabs-container');
+        const slideSpeakerBadge = document.getElementById('slide-speaker-badge');
+        const slideTopic = document.getElementById('slide-topic');
+        const currentSlideNum = document.getElementById('current-slide-num');
+        const totalSlidesNum = document.getElementById('total-slides-num');
+        const slideTitle = document.getElementById('slide-title');
+        const speakerScript = document.getElementById('speaker-script');
+        const roboticCueBox = document.getElementById('robotic-cue-box');
+        const roboticCueText = document.getElementById('robotic-cue-text');
+        const prevSlideBtn = document.getElementById('prev-slide-btn');
+        const nextSlideBtn = document.getElementById('next-slide-btn');
+        const slideProgressBar = document.getElementById('slide-progress');
+        const currentGestureBadge = document.getElementById('current-gesture-badge');
+        const btnOpen = document.getElementById('btn-open');
+        const btnClosed = document.getElementById('btn-closed');
+        const telemetryRatio = document.getElementById('telemetry-ratio');
+        const votingPills = document.getElementById('voting-pills');
+        const serialTerminal = document.getElementById('serial-terminal');
+
+        // --- 4. INITIALIZATION ---
+        window.addEventListener('DOMContentLoaded', () => {
+            totalSlidesNum.innerText = slidesData.length;
+            renderTabs();
+            loadSlide(0);
+            init3DRoboticHand();
+            
+            // Explicit user gesture unlocks AudioContext & Speech API smoothly
+            const unlockAudioContext = () => {
+                hasUserInteracted = true;
+                if (!audioCtx) {
+                    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtxClass) audioCtx = new AudioCtxClass();
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            };
+            document.addEventListener('click', unlockAudioContext);
+            document.addEventListener('keydown', unlockAudioContext);
+
+            // Keyboard arrows listener for presentation
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+                    navigateSlide(1);
+                } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                    navigateSlide(-1);
+                }
+            });
+        });
+
+        // --- 5. RENDER SPEAKER TABS ---
+        function renderTabs() {
+            tabsContainer.innerHTML = '';
+            slidesData.forEach((s, idx) => {
+                const btn = document.createElement('button');
+                btn.className = `speaker-tab px-3 py-1.5 rounded-lg text-xs font-mono whitespace-nowrap transition flex items-center gap-1.5 ${
+                    idx === currentSlideIndex 
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 font-bold shadow-md shadow-cyan-500/10' 
+                        : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-slate-200'
+                }`;
+                btn.innerHTML = `<span class="text-[10px] text-slate-500">S${s.speaker}</span> ${s.topic}`;
+                btn.onclick = () => jumpToSlide(idx);
+                tabsContainer.appendChild(btn);
+            });
+        }
+
+        // --- 6. LOAD SLIDE DATA ---
+        function loadSlide(index) {
+            if (index < 0 || index >= slidesData.length) return;
+            currentSlideIndex = index;
+            const data = slidesData[index];
+
+            // Update Header & Badge
+            slideSpeakerBadge.innerText = data.badge;
+            slideTopic.innerText = data.topic;
+            currentSlideNum.innerText = index + 1;
+            slideTitle.innerText = data.title;
+
+            // Render Script Paragraphs
+            speakerScript.innerHTML = '';
+            data.script.forEach(pText => {
+                const p = document.createElement('p');
+                p.className = 'text-slate-300 leading-relaxed';
+                p.innerText = pText;
+                speakerScript.appendChild(p);
+            });
+
+            // Cue Box Handling
+            if (data.cue) {
+                roboticCueBox.classList.remove('hidden');
+                roboticCueText.innerText = `"${data.cue}"`;
+            } else {
+                roboticCueBox.classList.add('hidden');
+            }
+
+            // Buttons state
+            prevSlideBtn.disabled = (index === 0);
+            nextSlideBtn.disabled = (index === slidesData.length - 1);
+
+            // Progress Bar Width
+            const pct = ((index + 1) / slidesData.length) * 100;
+            slideProgressBar.style.width = `${pct}%`;
+
+            // Update Tab UI
+            renderTabs();
+
+            // Set state gesture if specified
+            if (data.gesture) {
+                setGestureState(data.gesture);
+            }
+
+            // Automatically speak cue if available (only after user has engaged with presentation)
+            if (data.cue && isAudioEnabled && hasUserInteracted) {
+                speakText(data.cue, true);
+            }
+        }
+
+        function navigateSlide(direction) {
+            const nextIdx = currentSlideIndex + direction;
+            if (nextIdx >= 0 && nextIdx < slidesData.length) {
+                loadSlide(nextIdx);
+            }
+        }
+
+        function jumpToSlide(idx) {
+            loadSlide(idx);
+        }
+
+        // --- 7. AUDIO & TEXT TO SPEECH (TTS) SYSTEM ---
+        function toggleAudio() {
+            isAudioEnabled = !isAudioEnabled;
+            const icon = document.getElementById('audio-icon');
+            const status = document.getElementById('audio-status');
+            if (isAudioEnabled) {
+                icon.className = 'fa-solid fa-volume-high text-cyan-400';
+                status.innerText = 'AUDIO ON';
+            } else {
+                icon.className = 'fa-solid fa-volume-xmark text-slate-500';
+                status.innerText = 'AUDIO OFF';
+                if (synth) synth.cancel();
+            }
+        }
+
+        function toggleRoboticEffect() {
+            isRoboticEffectEnabled = !isRoboticEffectEnabled;
+            const btn = document.getElementById('robot-voice-effect-btn');
+            if (isRoboticEffectEnabled) {
+                btn.classList.add('border-purple-500/50', 'bg-purple-950/30');
+            } else {
+                btn.classList.remove('border-purple-500/50', 'bg-purple-950/30');
+            }
+        }
+
+        function speakRoboticCue() {
+            const currentCue = slidesData[currentSlideIndex].cue;
+            if (currentCue) {
+                speakText(currentCue, true);
+            }
+        }
+
+        function readFullSpeakerScript() {
+            const currentScript = slidesData[currentSlideIndex].script.join(' ');
+            speakText(currentScript, false);
+        }
+
+        function speakText(text, isRobotic = false) {
+            if (!isAudioEnabled || !('speechSynthesis' in window)) return;
+
+            try {
+                synth.cancel(); // Stop current speech
+            } catch (e) {}
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = isRobotic ? 0.9 : 1.0;
+            utterance.pitch = isRobotic ? 0.6 : 1.0;
+
+            // Attempt to get an English robotic sounding voice
+            const voices = synth.getVoices();
+            if (voices && voices.length > 0) {
+                const roboticVoice = voices.find(v => v.name.includes('Google') || v.name.includes('David') || v.name.includes('Zira') || (v.lang && v.lang.startsWith('en')));
+                if (roboticVoice) utterance.voice = roboticVoice;
+            }
+
+            // Play background robotic audio bleep effect if enabled
+            if (isRobotic && isRoboticEffectEnabled) {
+                playCyberBleepSound();
+            }
+
+            try {
+                synth.speak(utterance);
+            } catch (e) {
+                console.warn('Speech synthesis error:', e);
+            }
+        }
+
+        // Web Audio Synthesizer for futuristic sound effect with user-gesture guard
+        function playCyberBleepSound() {
+            try {
+                if (!hasUserInteracted) return;
+                if (!audioCtx) {
+                    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtxClass) audioCtx = new AudioCtxClass();
+                }
+                if (!audioCtx) return;
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const ctx = audioCtx;
+                
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(120, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
+
+                gain.gain.setValueAtTime(0.12, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.2);
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                osc.start();
+                osc.stop(ctx.currentTime + 0.22);
+            } catch (e) {
+                // Audio Context fallback silent
+            }
+        }
+
+        // --- 8. GESTURE & HARDWARE STATE HANDLING ---
+        function setGestureState(state) {
+            currentHandState = state;
+
+            if (state === 'OPEN') {
+                currentGestureBadge.className = 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-glow';
+                currentGestureBadge.innerText = 'STATE: OPEN';
+                btnOpen.className = 'py-2.5 px-3 rounded-xl border border-cyan-500/80 bg-cyan-950 text-cyan-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1 ring-2 ring-cyan-500/50';
+                btnClosed.className = 'py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1';
+                
+                telemetryRatio.innerText = '1.42 (OPEN)';
+                telemetryRatio.className = 'text-emerald-400 font-bold';
+
+                updateVotingPills(true);
+                logSerialOutput("'O' -> Servos OPEN [180°, 180°, 180°, 180°, 180°]");
+            } else {
+                currentGestureBadge.className = 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 text-glow-red';
+                currentGestureBadge.innerText = 'STATE: CLOSED';
+                btnClosed.className = 'py-2.5 px-3 rounded-xl border border-rose-500/80 bg-rose-950 text-rose-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1 ring-2 ring-rose-500/50';
+                btnOpen.className = 'py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-mono font-bold transition flex flex-col items-center gap-1';
+
+                telemetryRatio.innerText = '0.94 (CLOSED)';
+                telemetryRatio.className = 'text-rose-400 font-bold';
+
+                updateVotingPills(false);
+                logSerialOutput("'C' -> Servos CLOSED [0°, 0°, 0°, 0°, 0°]");
+            }
+
+            // Animate 3D hand
+            targetFingerFlex = (state === 'OPEN') ? 0 : 1.35;
+        }
+
+        function updateVotingPills(isOpen) {
+            const colorClass = isOpen ? 'bg-cyan-400 shadow-cyan-400' : 'bg-rose-500 shadow-rose-500';
+            votingPills.innerHTML = '';
+            for (let i = 0; i < 7; i++) {
+                const pill = document.createElement('span');
+                pill.className = `w-2.5 h-5 rounded ${colorClass} shadow-sm transition-all duration-150`;
+                votingPills.appendChild(pill);
+            }
+        }
+
+        function toggleLiveAutoSim() {
+            const btnText = document.getElementById('auto-sim-text');
+            const btnIcon = document.getElementById('auto-sim-icon');
+
+            if (autoWaveInterval) {
+                clearInterval(autoWaveInterval);
+                autoWaveInterval = null;
+                btnText.innerText = 'AUTO WAVE';
+                btnIcon.className = 'fa-solid fa-repeat text-base';
+            } else {
+                btnText.innerText = 'STOP SIM';
+                btnIcon.className = 'fa-solid fa-stop text-base text-rose-400';
+                autoWaveInterval = setInterval(() => {
+                    const newState = (currentHandState === 'OPEN') ? 'CLOSED' : 'OPEN';
+                    setGestureState(newState);
+                }, 2200);
+            }
+        }
+
+        function logSerialOutput(msg) {
+            const line = document.createElement('div');
+            const now = new Date().toLocaleTimeString().split(' ')[0];
+            line.className = 'text-cyan-400 font-bold';
+            line.innerText = `> [${now}] TX_CMD: ${msg}`;
+            
+            serialTerminal.appendChild(line);
+            serialTerminal.scrollTop = serialTerminal.scrollHeight;
+
+            // Keep terminal history manageable
+            if (serialTerminal.children.length > 25) {
+                serialTerminal.removeChild(serialTerminal.children[0]);
+            }
+        }
+
+
+        // --- 9. THREE.JS 3D ROBOTIC HAND VISUALIZER ---
+        let scene, camera, renderer;
+        let handGroup, palmMesh;
+        let fingers = [];
+        let landmarkNodes = [];
+        let targetFingerFlex = 0; // 0 = fully extended (OPEN), 1.35 = bent (CLOSED)
+        let currentFingerFlex = 0;
+
+        function init3DRoboticHand() {
+            const container = document.getElementById('canvas-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x06090e, 0.08);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+            camera.position.set(0, 0, 11);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // Ambient & Directional Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const cyanLight = new THREE.PointLight(0x06b6d4, 2, 20);
+            cyanLight.position.set(5, 5, 5);
+            scene.add(cyanLight);
+
+            const purpleLight = new THREE.PointLight(0x8b5cf6, 2, 20);
+            purpleLight.position.set(-5, -5, 5);
+            scene.add(purpleLight);
+
+            // Main Robotic Hand Group
+            handGroup = new THREE.Group();
+            scene.add(handGroup);
+
+            // Material Palette
+            const metalMat = new THREE.MeshPhongMaterial({
+                color: 0x1e293b,
+                specular: 0x06b6d4,
+                shininess: 40,
+                wireframe: false
+            });
+
+            const jointMat = new THREE.MeshPhongMaterial({
+                color: 0x06b6d4,
+                emissive: 0x083344,
+                shininess: 80
+            });
+
+            const landmarkMat = new THREE.MeshBasicMaterial({
+                color: 0x22d3ee,
+                wireframe: true
+            });
+
+            // Palm Base
+            const palmGeo = new THREE.BoxGeometry(2.2, 2.6, 0.5);
+            palmMesh = new THREE.Mesh(palmGeo, metalMat);
+            handGroup.add(palmMesh);
+
+            // 5 Fingers Structure (Thumb, Index, Middle, Ring, Pinky)
+            const fingerConfigs = [
+                { x: -1.2, y: -0.4, length: 1.4, joints: 2, name: 'Thumb' },
+                { x: -0.8, y: 1.3, length: 1.8, joints: 3, name: 'Index' },
+                { x: 0.0,  y: 1.4, length: 2.0, joints: 3, name: 'Middle' },
+                { x: 0.8,  y: 1.3, length: 1.8, joints: 3, name: 'Ring' },
+                { x: 1.4,  y: 0.9, length: 1.4, joints: 3, name: 'Pinky' }
+            ];
+
+            fingers = [];
+            landmarkNodes = [];
+
+            // Add Wrist Landmark (0)
+            createLandmarkNode(0, -1.5, 0);
+
+            fingerConfigs.forEach((cfg, fIdx) => {
+                const fingerGroup = new THREE.Group();
+                fingerGroup.position.set(cfg.x, cfg.y, 0);
+                
+                // Rotation pivot for joint flex
+                const jointPivot = new THREE.Group();
+                fingerGroup.add(jointPivot);
+
+                // Build Segment Mesh
+                const segGeo = new THREE.CylinderGeometry(0.12, 0.15, cfg.length, 8);
+                segGeo.translate(0, cfg.length / 2, 0);
+                const segMesh = new THREE.Mesh(segGeo, metalMat);
+                jointPivot.add(segMesh);
+
+                // Joint knuckle sphere
+                const knuckleGeo = new THREE.SphereGeometry(0.2, 12, 12);
+                const knuckleMesh = new THREE.Mesh(knuckleGeo, jointMat);
+                fingerGroup.add(knuckleMesh);
+
+                // Tip Landmark Node
+                const tipNode = createLandmarkNode(cfg.x, cfg.y + cfg.length, 0.2);
+
+                handGroup.add(fingerGroup);
+
+                fingers.push({
+                    group: fingerGroup,
+                    pivot: jointPivot,
+                    config: cfg,
+                    tipNode: tipNode
+                });
+            });
+
+            // Adjust Hand position & tilt
+            handGroup.position.y = -0.5;
+
+            // Resilient Responsive ResizeObserver (Handles tab switching & iframe resize)
+            if (window.ResizeObserver) {
+                const resizeObserver = new ResizeObserver((entries) => {
+                    for (let entry of entries) {
+                        const nw = Math.floor(entry.contentRect.width || container.clientWidth);
+                        const nh = Math.floor(entry.contentRect.height || container.clientHeight);
+                        if (nw > 20 && nh > 20 && renderer && camera) {
+                            camera.aspect = nw / nh;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(nw, nh);
+                        }
+                    }
+                });
+                resizeObserver.observe(container);
+            } else {
+                window.addEventListener('resize', () => {
+                    const nw = container.clientWidth;
+                    const nh = container.clientHeight;
+                    if (nw > 20 && nh > 20 && renderer && camera) {
+                        camera.aspect = nw / nh;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(nw, nh);
+                    }
+                });
+            }
+
+            // WebGL Context Loss Handlers
+            renderer.domElement.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault();
+                console.warn('[Three.js] WebGL context lost.');
+            }, false);
+            renderer.domElement.addEventListener('webglcontextrestored', () => {
+                console.log('[Three.js] WebGL context restored. Reinitializing...');
+                init3DRoboticHand();
+            }, false);
+
+            // Start Render Loop
+            animate3D();
+        }
+
+        function createLandmarkNode(x, y, z) {
+            const nodeGeo = new THREE.IcosahedronGeometry(0.12, 1);
+            const nodeMat = new THREE.MeshBasicMaterial({
+                color: 0x22d3ee,
+                wireframe: true
+            });
+            const node = new THREE.Mesh(nodeGeo, nodeMat);
+            node.position.set(x, y, z);
+            handGroup.add(node);
+            landmarkNodes.push(node);
+            return node;
+        }
+
+        function animate3D() {
+            requestAnimationFrame(animate3D);
+
+            const container = document.getElementById('canvas-container');
+            if (!renderer || !scene || !camera || !container || container.clientWidth <= 20 || container.clientHeight <= 20) {
+                return;
+            }
+
+            // Smooth Interpolation for Finger Curling (Flex)
+            currentFingerFlex += (targetFingerFlex - currentFingerFlex) * 0.1;
+
+            fingers.forEach((f, idx) => {
+                // Flex rotation around X axis
+                f.pivot.rotation.x = currentFingerFlex * (idx === 0 ? 0.7 : 1.0);
+                
+                // Slight thumb rotation inwards
+                if (idx === 0) {
+                    f.pivot.rotation.z = -currentFingerFlex * 0.4;
+                }
+            });
+
+            // Subtle continuous idle rotation for dynamic cyberpunk feel
+            handGroup.rotation.y = Math.sin(Date.now() * 0.001) * 0.25;
+            handGroup.rotation.x = Math.cos(Date.now() * 0.0008) * 0.1;
+
+            // Pulsating cyan landmark nodes
+            landmarkNodes.forEach(node => {
+                node.rotation.y += 0.03;
+            });
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
