@@ -1,0 +1,523 @@
+"""
+hand_tracker_ai.py
+
+"""
+
+import argparse
+import json
+import math
+import os
+import platform
+import time
+from collections import Counter, deque
+from typing import Deque, Dict, List, Optional, Tuple
+
+import cv2
+import joblib
+import numpy as np
+import mediapipe as mp
+
+try:
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    mp_drawing_styles = mp.solutions.drawing_styles
+except AttributeError:
+    from mediapipe.python.solutions import hands as mp_hands
+    from mediapipe.python.solutions import drawing_utils as mp_drawing
+    from mediapipe.python.solutions import drawing_styles as mp_drawing_styles
+
+
+WRIST_IDX = 0
+MIDDLE_MCP_IDX = 9
+FINGERTIPS = (("thumb", 4), ("index", 8), ("middle", 12), ("ring", 16), ("pinky", 20))
+FEATURE_NAMES = [name for name, _ in FINGERTIPS]
+FEATURE_VERSION = 2
+
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+CAMERA_FPS = 30
+
+OPEN_ABOVE = 1.35
+CLOSED_BELOW = 1.15
+
+VOTE_WINDOW = 7
+VOTES_TO_INIT = 3
+VOTES_TO_SWITCH = 4
+
+
+class FpsCounter:
+    def __init__(self, smoothing: float = 0.9) -> None:
+        self.smoothing = smoothing
+        self.fps = 0.0
+        self._prev = time.perf_counter()
+
+    def tick(self) -> int:
+        now = time.perf_counter()
+        dt = now - self._prev
+        self._prev = now
+        if dt > 0:
+            instant = 1.0 / dt
+            self.fps = instant if self.fps == 0 else (
+                self.smoothing * self.fps + (1 - self.smoothing) * instant
+            )
+        return int(round(self.fps))
+
+
+class ResilientCamera:
+    """
+    Robust webcam opener.
+
+    Windows order:
+      DirectShow -> Media Foundation -> default backend
+    Each backend is tested with multiple resolutions and actually must return
+    a real frame before it is accepted.
+    """
+
+    def __init__(
+        self,
+        index: int = 0,
+        width: int = CAMERA_WIDTH,
+        height: int = CAMERA_HEIGHT,
+        fps: int = CAMERA_FPS,
+        warmup_timeout: float = 3.0,
+        stall_timeout: float = 3.0,
+        retry_delay: float = 2.0,
+        auto_index: bool = False,
+    ) -> None:
+        self.requested_index = index
+        self.index = index
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.warmup_timeout = warmup_timeout
+        self.stall_timeout = stall_timeout
+        self.retry_delay = retry_delay
+        self.auto_index = auto_index
+
+        self.cap: Optional[cv2.VideoCapture] = None
+        self._opened_at = 0.0
+        self._last_frame = 0.0
+        self._last_attempt = 0.0
+        self._last_error = ""
+        self._backend_pos = 0
+        self._resolution_pos = 0
+
+        if platform.system().lower() == "windows":
+            self._backends = [
+                ("DirectShow", cv2.CAP_DSHOW),
+                ("Media Foundation", cv2.CAP_MSMF),
+                ("Default", cv2.CAP_ANY),
+            ]
+        else:
+            self._backends = [("Default", cv2.CAP_ANY)]
+
+        self._resolutions = [
+            (width, height),
+            (640, 480),
+            (1280, 720),
+            (320, 240),
+        ]
+
+        if not self._open():
+            print(
+                f"[CAMERA ERROR] No working webcam found for index {self.requested_index}."
+            )
+            print("[CAMERA HINT] Try --camera 1, --camera 2, etc., or --scan.")
+
+    @staticmethod
+    def _camera_indexes() -> List[int]:
+        # Most Windows systems have 0-3; keep scan short and predictable.
+        return list(range(4))
+
+    def _candidate_indexes(self) -> List[int]:
+        if self.auto_index:
+            return self._camera_indexes()
+        return [self.requested_index]
+
+    @staticmethod
+    def _backend_name(api: int) -> str:
+        if api == cv2.CAP_DSHOW:
+            return "DirectShow"
+        if api == cv2.CAP_MSMF:
+            return "Media Foundation"
+        return "Default"
+
+    def _configure(self, cap: cv2.VideoCapture, width: int, height: int) -> None:
+        # Do not force MJPG on MSMF. It can cause "open but no frames" on some cameras.
+        if platform.system().lower() == "windows":
+            try:
+                if cap.getBackendName().upper().find("DSHOW") >= 0:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            except Exception:
+                pass
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, self.fps)
+
+        # Buffer size is not supported by every backend.
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+
+    def _wait_for_frame(self, cap: cv2.VideoCapture) -> Optional[np.ndarray]:
+        deadline = time.monotonic() + self.warmup_timeout
+        last_frame = None
+
+        while time.monotonic() < deadline:
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size > 0:
+                last_frame = frame
+                break
+            time.sleep(0.05)
+
+        return last_frame
+
+    def _open(self) -> bool:
+        self._last_attempt = time.monotonic()
+
+        indexes = self._candidate_indexes()
+
+        for cam_index in indexes:
+            for backend_name, backend in self._backends:
+                for width, height in self._resolutions:
+                    cap = None
+                    try:
+                        cap = cv2.VideoCapture(cam_index, backend)
+
+                        if not cap.isOpened():
+                            if cap is not None:
+                                cap.release()
+                            continue
+
+                        self._configure(cap, width, height)
+                        frame = self._wait_for_frame(cap)
+
+                        if frame is not None:
+                            self.cap = cap
+                            self.index = cam_index
+                            self.width = width
+                            self.height = height
+                            self._opened_at = time.monotonic()
+                            self._last_frame = self._opened_at
+
+                            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            print(
+                                f"[CAMERA OK] Camera {cam_index} opened using "
+                                f"{backend_name} at {actual_w}x{actual_h}."
+                            )
+                            return True
+
+                        print(
+                            f"[CAMERA TRY] Camera {cam_index}: "
+                            f"{backend_name} {width}x{height} returned no frame."
+                        )
+
+                    except Exception as err:
+                        self._last_error = str(err)
+                    finally:
+                        if cap is not None and self.cap is not cap:
+                            cap.release()
+
+        self.cap = None
+        return False
+
+    def read(self) -> Optional[np.ndarray]:
+        if self.cap is None or not self.cap.isOpened():
+            if time.monotonic() - self._last_attempt >= self.retry_delay:
+                if not self._open():
+                    print("[CAMERA RETRY] Webcam unavailable; will retry.")
+            else:
+                time.sleep(0.03)
+            return None
+
+        try:
+            ok, frame = self.cap.read()
+        except Exception:
+            ok, frame = False, None
+
+        if ok and frame is not None and frame.size > 0:
+            self._last_frame = time.monotonic()
+            return frame
+
+        if time.monotonic() - self._last_frame > self.stall_timeout:
+            print("[CAMERA WARN] Webcam stopped producing frames; reconnecting.")
+            self.release()
+            self._last_attempt = 0.0
+        else:
+            time.sleep(0.01)
+
+        return None
+
+    def release(self) -> None:
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+        self.cap = None
+
+    def is_open(self) -> bool:
+        return self.cap is not None and self.cap.isOpened()
+
+
+class HandTrackerAI:
+    def __init__(self, model_path: str = "user_hand_model.pkl", load_model: bool = True) -> None:
+        self.mp_hands = mp_hands
+        self.mp_drawing = mp_drawing
+        self.mp_drawing_styles = mp_drawing_styles
+
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            model_complexity=0,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7,
+        )
+
+        self.model_path = model_path
+        self.clf = None
+        self.scaler = None
+        self._heuristic_state = "OPEN"
+        self._votes: Deque[str] = deque(maxlen=VOTE_WINDOW)
+        self._stable_state: Optional[str] = None
+
+        if load_model:
+            self.load_user_model()
+
+    def load_user_model(self) -> None:
+        if not os.path.exists(self.model_path):
+            print(f"[AI WARN] '{self.model_path}' not found. Using heuristic.")
+            return
+
+        try:
+            saved = joblib.load(self.model_path)
+            clf = saved.get("model")
+            scaler = saved.get("scaler")
+            expected = len(FEATURE_NAMES)
+            n_in = getattr(scaler, "n_features_in_", expected)
+
+            if saved.get("feature_version") != FEATURE_VERSION or n_in != expected:
+                print("[AI WARN] Model feature version mismatch. Using heuristic.")
+                return
+
+            self.clf, self.scaler = clf, scaler
+            print(f"[AI OK] Loaded model: {self.model_path}")
+
+        except Exception as err:
+            print(f"[AI ERROR] Could not load model: {err}")
+            print("[AI] Falling back to heuristic.")
+
+    @staticmethod
+    def _euclidean_distance(
+        p1: Tuple[float, float, float],
+        p2: Tuple[float, float, float],
+    ) -> float:
+        return math.sqrt(
+            (p1[0] - p2[0]) ** 2
+            + (p1[1] - p2[1]) ** 2
+            + (p1[2] - p2[2]) ** 2
+        )
+
+    def extract_features(
+        self,
+        landmarks,
+        frame_w: int = 1,
+        frame_h: int = 1,
+    ) -> Optional[List[float]]:
+        try:
+            pts = [
+                (lm.x * frame_w, lm.y * frame_h, lm.z * frame_w)
+                for lm in landmarks
+            ]
+            wrist = pts[WRIST_IDX]
+            palm_size = self._euclidean_distance(wrist, pts[MIDDLE_MCP_IDX])
+
+            if palm_size < 1e-6:
+                return None
+
+            return [
+                self._euclidean_distance(wrist, pts[idx]) / palm_size
+                for _, idx in FINGERTIPS
+            ]
+        except (IndexError, AttributeError, TypeError) as err:
+            print(f"[AI ERROR] Feature extraction: {err}")
+            return None
+
+    @staticmethod
+    def finger_extension(features: Optional[List[float]]) -> float:
+        if features is None or len(features) < 2:
+            return 0.0
+        try:
+            val = float(sum(features[1:]) / len(features[1:]))
+            return val if math.isfinite(val) else 0.0
+        except (ZeroDivisionError, TypeError):
+            return 0.0
+
+    def classify_hand_state(self, features: List[float]) -> str:
+        if self.clf is not None and self.scaler is not None:
+            try:
+                scaled = self.scaler.transform([features])
+                return str(self.clf.predict(scaled)[0]).upper()
+            except Exception as err:
+                print(f"[AI ERROR] Prediction failed: {err}")
+                self.clf = None
+
+        ext = self.finger_extension(features)
+
+        if ext >= OPEN_ABOVE:
+            self._heuristic_state = "OPEN"
+        elif ext <= CLOSED_BELOW:
+            self._heuristic_state = "CLOSED"
+
+        return self._heuristic_state
+
+    def _smooth(self, raw_state: str) -> Optional[str]:
+        self._votes.append(raw_state)
+        top, count = Counter(self._votes).most_common(1)[0]
+
+        if self._stable_state is None:
+            if count >= VOTES_TO_INIT:
+                self._stable_state = top
+        elif top != self._stable_state and count >= VOTES_TO_SWITCH:
+            self._stable_state = top
+
+        return self._stable_state
+
+    def detect_features(
+        self,
+        frame: np.ndarray,
+    ) -> Tuple[np.ndarray, Optional[List[float]]]:
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb.flags.writeable = False
+        results = self.hands.process(rgb)
+
+        if not results.multi_hand_landmarks:
+            return frame, None
+
+        hand = results.multi_hand_landmarks[0]
+
+        self.mp_drawing.draw_landmarks(
+            frame,
+            hand,
+            self.mp_hands.HAND_CONNECTIONS,
+            self.mp_drawing_styles.get_default_hand_landmarks_style(),
+            self.mp_drawing_styles.get_default_hand_connections_style(),
+        )
+
+        for idx in [WRIST_IDX] + [i for _, i in FINGERTIPS]:
+            cx = int(hand.landmark[idx].x * w)
+            cy = int(hand.landmark[idx].y * h)
+            cv2.circle(frame, (cx, cy), 8, (0, 255, 0), -1)
+
+        return frame, self.extract_features(hand.landmark, w, h)
+
+    def process_frame(
+        self,
+        frame: np.ndarray,
+    ) -> Tuple[np.ndarray, Optional[Dict[str, str]]]:
+        frame, features = self.detect_features(frame)
+
+        if features is None:
+            self._votes.clear()
+            return frame, None
+
+        raw = self.classify_hand_state(features)
+        stable = self._smooth(raw)
+
+        h = frame.shape[0]
+        cv2.putText(
+            frame,
+            f"ext={self.finger_extension(features):.2f} raw={raw}",
+            (10, h - 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 0),
+            2,
+        )
+
+        if stable is None:
+            return frame, None
+
+        return frame, {"hand_state": stable}
+
+    def close(self) -> None:
+        try:
+            self.hands.close()
+        except Exception:
+            pass
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="AI hand OPEN/CLOSED webcam test.")
+    parser.add_argument("--camera", type=int, default=0, help="Camera index, normally 0.")
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Automatically test camera indexes 0-3.",
+    )
+    parser.add_argument("--model", default="user_hand_model.pkl")
+    args = parser.parse_args()
+
+    camera = ResilientCamera(args.camera, auto_index=args.scan)
+    tracker = HandTrackerAI(model_path=args.model)
+    fps_counter = FpsCounter()
+    last_printed = None
+
+    print("[SYSTEM] Press Q or ESC to quit.")
+
+    try:
+        while True:
+            frame = camera.read()
+
+            if frame is None:
+                if cv2.waitKey(30) & 0xFF in (ord("q"), 27):
+                    break
+                continue
+
+            frame = cv2.flip(frame, 1)
+            frame, state = tracker.process_frame(frame)
+
+            fps = fps_counter.tick()
+            cv2.putText(
+                frame,
+                f"FPS: {fps}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+
+            if state:
+                label = state["hand_state"]
+                cv2.putText(
+                    frame,
+                    f"STATE: {label}",
+                    (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (0, 255, 0) if label == "OPEN" else (0, 0, 255),
+                    3,
+                )
+
+                if label != last_printed:
+                    print("[PREDICTION]", json.dumps(state))
+                    last_printed = label
+
+            cv2.imshow("AI Hand State Detection", frame)
+
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                break
+
+    finally:
+        camera.release()
+        cv2.destroyAllWindows()
+        tracker.close()
+
+
+if __name__ == "__main__":
+    main()
